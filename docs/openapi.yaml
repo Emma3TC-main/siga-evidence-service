@@ -1,0 +1,83 @@
+openapi: 3.0.3
+info:
+  title: SIGA Evidence API
+  version: 1.1.0
+  description: Metadata integrity and private object-storage evidence.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+paths:
+  /evidences:
+    get:
+      summary: List evidence by owner
+      parameters:
+        - { name: ownerType, in: query, schema: { $ref: '#/components/schemas/OwnerType' } }
+        - { name: ownerId, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Evidence list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/EvidenceResponse' }
+    post:
+      summary: Upload evidence multipart
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [ownerType, ownerId, file]
+              properties:
+                ownerType: { $ref: '#/components/schemas/OwnerType' }
+                ownerId: { type: string, format: uuid }
+                file: { type: string, format: binary }
+                metadata: { type: string, description: Optional JSON string metadata }
+      responses:
+        '201':
+          description: Uploaded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EvidenceResponse' }
+        '400': { description: Invalid owner/file/MIME/magic bytes }
+        '413': { description: File too large }
+  /evidences/{id}:
+    get:
+      summary: Get evidence metadata
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Evidence metadata
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EvidenceResponse' }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    OwnerType:
+      type: string
+      enum: [MOVEMENT, ASSET, ADJUSTMENT, REPORT]
+    EvidenceResponse:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        ownerType: { $ref: '#/components/schemas/OwnerType' }
+        ownerId: { type: string, format: uuid }
+        objectKey: { type: string }
+        originalFilename: { type: string }
+        contentType: { type: string }
+        sizeBytes: { type: integer, format: int64 }
+        sha256: { type: string, pattern: '^[0-9a-fA-F]{64}$' }
+        storageProvider: { type: string, enum: [MINIO, GCS] }
+        uploadedByUserId: { type: string, format: uuid }
+        status: { type: string, enum: [RECEIVED, VALIDATING, STORED, AVAILABLE, REJECTED, ARCHIVED] }
+        metadata: { type: object, additionalProperties: true }
+        uploadedAt: { type: string, format: date-time }
