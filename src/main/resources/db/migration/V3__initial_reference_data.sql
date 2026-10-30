@@ -1,1 +1,1 @@
--- TODO: Pegar aquí los INSERT iniciales del esquema 'evidence'.
+-- Intentional no-op. Evidence has no canonical seed/reference data.

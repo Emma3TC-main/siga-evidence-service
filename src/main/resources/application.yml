@@ -1,0 +1,62 @@
+server:
+  address: 127.0.0.1
+  port: ${EVIDENCE_PORT:8084}
+
+spring:
+  application:
+    name: siga-evidence-service
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 21MB
+  datasource:
+    url: ${EVIDENCE_DB_URL}
+    username: ${EVIDENCE_DB_USER}
+    password: ${EVIDENCE_DB_PASSWORD}
+  flyway:
+    schemas: evidence
+    default-schema: evidence
+    create-schemas: true
+    clean-disabled: true
+  rabbitmq:
+    host: ${EVIDENCE_RABBIT_HOST:127.0.0.1}
+    port: ${EVIDENCE_RABBIT_PORT:5672}
+    username: ${EVIDENCE_RABBIT_USER}
+    password: ${EVIDENCE_RABBIT_PASSWORD}
+    publisher-confirm-type: correlated
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
+
+evidence:
+  security:
+    jwks-uri: ${EVIDENCE_JWKS_URI:http://127.0.0.1:8081/.well-known/jwks.json}
+    issuer: ${EVIDENCE_JWT_ISSUER:siga-identity}
+    audience: ${EVIDENCE_JWT_AUDIENCE:siga-api}
+  inventory:
+    base-url: ${EVIDENCE_INVENTORY_URL:http://127.0.0.1:8083}
+  storage:
+    endpoint: ${EVIDENCE_MINIO_ENDPOINT}
+    access-key: ${EVIDENCE_MINIO_ACCESS_KEY}
+    secret-key: ${EVIDENCE_MINIO_SECRET_KEY}
+    bucket: ${EVIDENCE_MINIO_BUCKET:siga-evidences}
+    image-max-bytes: ${EVIDENCE_IMAGE_MAX_BYTES:10485760}
+    pdf-max-bytes: ${EVIDENCE_PDF_MAX_BYTES:20971520}
+  outbox:
+    exchange: ${EVIDENCE_OUTBOX_EXCHANGE:siga.events}
+    routing-key: ${EVIDENCE_OUTBOX_ROUTING_KEY:evidence.uploaded.v1}
+    initial-delay-ms: ${EVIDENCE_OUTBOX_INITIAL_DELAY_MS:5000}
+    fixed-delay-ms: ${EVIDENCE_OUTBOX_FIXED_DELAY_MS:1000}
+    confirm-timeout-ms: ${EVIDENCE_OUTBOX_CONFIRM_TIMEOUT_MS:5000}
+    retry-max-delay-seconds: ${EVIDENCE_OUTBOX_RETRY_MAX_DELAY_SECONDS:300}

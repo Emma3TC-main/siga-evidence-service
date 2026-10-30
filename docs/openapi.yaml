@@ -1,8 +1,10 @@
 openapi: 3.0.3
 info:
   title: SIGA Evidence API
-  version: 1.1.0
-  description: Metadata integrity and private object-storage evidence.
+  version: 1.2.0
+  description: >-
+    Evidencia privada asociada a movimientos. El MVP valida existencia y acceso al
+    owner antes de almacenar el objeto y nunca expone objectKey ni URLs públicas.
 servers:
   - url: /api/v1
 security:
@@ -10,20 +12,51 @@ security:
 paths:
   /evidences:
     get:
-      summary: List evidence by owner
+      summary: Listar evidencias de un movimiento
+      description: >-
+        Requiere EVIDENCE_READ. ownerType y ownerId son obligatorios y se validan
+        mediante la política de acceso del owner. No existe listado global en el MVP.
+        El orden es fijo: uploadedAt DESC, id DESC.
       parameters:
-        - { name: ownerType, in: query, schema: { $ref: '#/components/schemas/OwnerType' } }
-        - { name: ownerId, in: query, schema: { type: string, format: uuid } }
+        - name: ownerType
+          in: query
+          required: true
+          schema: { $ref: '#/components/schemas/OwnerType' }
+        - name: ownerId
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: page
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+        - name: size
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
       responses:
         '200':
-          description: Evidence list
+          description: Página de evidencias accesibles del owner
           content:
             application/json:
-              schema:
-                type: array
-                items: { $ref: '#/components/schemas/EvidenceResponse' }
+              schema: { $ref: '#/components/schemas/EvidencePage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
     post:
-      summary: Upload evidence multipart
+      summary: Adjuntar evidencia a un movimiento
+      description: >-
+        Requiere EVIDENCE_WRITE. El actor se obtiene exclusivamente del sub del JWT.
+        El owner se valida antes de crear un objeto. PDF admite hasta 20 MiB; JPEG y
+        PNG hasta 10 MiB. MIME declarado, extensión y magic bytes deben coincidir.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: UUID estable por operación de upload.
+          schema: { type: string, format: uuid }
       requestBody:
         required: true
         content:
@@ -34,50 +67,193 @@ paths:
               properties:
                 ownerType: { $ref: '#/components/schemas/OwnerType' }
                 ownerId: { type: string, format: uuid }
-                file: { type: string, format: binary }
-                metadata: { type: string, description: Optional JSON string metadata }
+                file:
+                  type: string
+                  format: binary
+                  description: PDF, JPEG o PNG validado por extensión, MIME y magic bytes.
+                metadata:
+                  type: string
+                  maxLength: 16384
+                  description: >-
+                    JSON UTF-8 opcional con raíz object, máximo 16 KiB serializados y
+                    profundidad máxima 5. No admite secretos ni valores binarios/base64.
+            encoding:
+              file:
+                contentType: application/pdf, image/jpeg, image/png
       responses:
         '201':
-          description: Uploaded
+          description: Evidencia almacenada y metadata confirmada
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EvidenceResponse' }
-        '400': { description: Invalid owner/file/MIME/magic bytes }
-        '413': { description: File too large }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /evidences/{id}:
+    parameters:
+      - $ref: '#/components/parameters/EvidenceId'
     get:
-      summary: Get evidence metadata
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string, format: uuid }
+      summary: Consultar metadata de evidencia
+      description: Requiere EVIDENCE_READ y acceso vigente al movimiento owner.
       responses:
         '200':
-          description: Evidence metadata
+          description: Metadata de evidencia sin objectKey
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EvidenceResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /evidences/{id}/content:
+    parameters:
+      - $ref: '#/components/parameters/EvidenceId'
+    get:
+      summary: Descargar contenido privado de evidencia
+      description: >-
+        Requiere EVIDENCE_READ y acceso vigente al movimiento owner. Evidence transmite
+        el objeto; no devuelve objectKey ni URL pública o permanente.
+      responses:
+        '200':
+          description: Binario transmitido desde almacenamiento privado
+          headers:
+            Content-Disposition:
+              description: attachment con nombre original sanitizado.
+              schema: { type: string }
+            Content-Length:
+              schema: { type: integer, format: int64 }
+            X-Content-Type-Options:
+              schema: { type: string, enum: [nosniff] }
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    EvidenceId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    BadRequest:
+      description: Parámetros, owner, metadata o archivo inválidos
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+    Unauthorized:
+      description: JWT ausente o inválido
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+    Forbidden:
+      description: Falta EVIDENCE_READ o EVIDENCE_WRITE
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+    NotFound:
+      description: Evidencia u owner inexistente o no visible para el actor
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+    Conflict:
+      description: Idempotency-Key reutilizada con un request diferente o aún en proceso
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+    PayloadTooLarge:
+      description: Archivo o metadata excede el límite admitido
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+    UnsupportedMediaType:
+      description: Tipo de archivo no admitido o MIME/extensión/magic bytes inconsistentes
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+    ServiceUnavailable:
+      description: Servicio owner o almacenamiento temporalmente no disponible
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
   schemas:
     OwnerType:
       type: string
-      enum: [MOVEMENT, ASSET, ADJUSTMENT, REPORT]
+      description: >-
+        En el MVP solo se admite MOVEMENT. Ajustes son movimientos ADJUST_POSITIVE o
+        ADJUST_NEGATIVE y usan el UUID del movimiento. ASSET, ADJUSTMENT y REPORT quedan
+        reservados para una versión posterior con interfaz de autorización por owner.
+      enum: [MOVEMENT]
+    EvidenceStatus:
+      type: string
+      enum: [RECEIVED, VALIDATING, STORED, AVAILABLE, REJECTED, ARCHIVED]
     EvidenceResponse:
       type: object
+      required:
+        - id
+        - ownerType
+        - ownerId
+        - originalFilename
+        - contentType
+        - sizeBytes
+        - sha256
+        - uploadedByUserId
+        - status
+        - metadata
+        - uploadedAt
       properties:
         id: { type: string, format: uuid }
         ownerType: { $ref: '#/components/schemas/OwnerType' }
         ownerId: { type: string, format: uuid }
-        objectKey: { type: string }
-        originalFilename: { type: string }
-        contentType: { type: string }
-        sizeBytes: { type: integer, format: int64 }
-        sha256: { type: string, pattern: '^[0-9a-fA-F]{64}$' }
-        storageProvider: { type: string, enum: [MINIO, GCS] }
+        originalFilename: { type: string, maxLength: 255 }
+        contentType: { type: string, enum: [application/pdf, image/jpeg, image/png] }
+        sizeBytes: { type: integer, format: int64, minimum: 1 }
+        sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
         uploadedByUserId: { type: string, format: uuid }
-        status: { type: string, enum: [RECEIVED, VALIDATING, STORED, AVAILABLE, REJECTED, ARCHIVED] }
-        metadata: { type: object, additionalProperties: true }
+        status: { $ref: '#/components/schemas/EvidenceStatus' }
+        metadata:
+          type: object
+          additionalProperties: true
         uploadedAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    EvidencePage:
+      type: object
+      required: [content, page, size, totalElements, totalPages, first, last]
+      properties:
+        content:
+          type: array
+          items: { $ref: '#/components/schemas/EvidenceResponse' }
+        page: { type: integer, minimum: 0 }
+        size: { type: integer, minimum: 1, maximum: 100 }
+        totalElements: { type: integer, format: int64, minimum: 0 }
+        totalPages: { type: integer, minimum: 0 }
+        first: { type: boolean }
+        last: { type: boolean }
+    ProblemDetails:
+      type: object
+      required: [type, title, status, detail, instance, code, timestamp, correlationId]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string }
+        code: { type: string }
+        timestamp: { type: string, format: date-time }
+        correlationId: { type: string, format: uuid }
