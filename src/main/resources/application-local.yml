@@ -1,20 +1,2 @@
-spring:
-  datasource:
-    url: jdbc:postgresql://localhost:5432/siga
-    username: siga_evidence
-    password: siga_evidence
-  
-  rabbitmq:
-    host: localhost
-    port: 5672
-    username: siga_mq
-    password: siga_mq_secret
-
-  data:
-    redis:
-      host: localhost
-      port: 6379
-
-# Configuración JWT (Apunta a las llaves que generaste)
-jwt:
-  public-key: file:../../siga-infrastructure/secrets/jwt_public.pem
+# Local runtime values are supplied explicitly through environment variables.
+# No database, broker, storage or JWT credentials are versioned here.
